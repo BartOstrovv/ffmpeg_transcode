@@ -10,14 +10,14 @@ extern "C"
 #include "libavutil/avutil.h"
 #include "libavutil/mathematics.h"
 }
-// 将H264转封装为MP4
-int main() {
-    int frame_index = 0;//统计帧数
-    int inVStreamIndex = -1, outVStreamIndex = -1;//输入输出视频流在文件中的索引位置
-    const char* inVFileName = "D://test.avi";
-    const char* outFileName = "output.mp4";
 
-    AVFormatContext* inVFmtCtx = NULL, * outFmtCtx = NULL;
+int main() {
+    int frame_index = 0;
+    int inVStreamIndex = -1, outVStreamIndex = -1;
+    const char* inFilePath = "D://test.avi";
+    const char* outFilePath = "output.mp4";
+
+    AVFormatContext* infmt_ctx = NULL, * outfmt_ctx = NULL;
     AVCodecParameters* codecPara = NULL;
     AVStream* outVStream = NULL;
     const AVCodec* outCodec = NULL;
@@ -27,48 +27,40 @@ int main() {
     AVPacket* pkt = av_packet_alloc();
 
     do {
-        //======================输入部分============================//
-        //打开输入文件
-        if (avformat_open_input(&inVFmtCtx, inVFileName, NULL, NULL) < 0) {
+        if (avformat_open_input(&infmt_ctx, inFilePath, NULL, NULL) < 0) {
             printf("Cannot open input file.\n");
             break;
         }
 
-        //查找输入文件中的流
-        if (avformat_find_stream_info(inVFmtCtx, NULL) < 0) {
+        if (avformat_find_stream_info(infmt_ctx, NULL) < 0) {
             printf("Cannot find stream info in input file.\n");
             break;
         }
 
-        //查找视频流在文件中的位置
-        for (size_t i = 0; i < inVFmtCtx->nb_streams; i++) {
-            if (inVFmtCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+        for (size_t i = 0; i < infmt_ctx->nb_streams; i++) {
+            if (infmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
                 inVStreamIndex = (int)i;
                 break;
             }
         }
 
-        codecPara = inVFmtCtx->streams[inVStreamIndex]->codecpar;//输入视频流的编码参数
+        codecPara = infmt_ctx->streams[inVStreamIndex]->codecpar;
 
         printf("===============Input information========>\n");
-        av_dump_format(inVFmtCtx, 0, inVFileName, 0);
-        printf("===============Input information========<\n");
+        av_dump_format(infmt_ctx, 0, inFilePath, 0);
+        printf("=======================<\n");
 
-        //=====================输出部分=========================//
-        //打开输出文件并填充格式数据
-        if (avformat_alloc_output_context2(&outFmtCtx, NULL, NULL, outFileName) < 0) {
+        if (avformat_alloc_output_context2(&outfmt_ctx, NULL, NULL, outFilePath) < 0) {
             printf("Cannot alloc output file context.\n");
             break;
         }
 
-        //打开输出文件并填充数据
-        if (avio_open(&outFmtCtx->pb, outFileName, AVIO_FLAG_READ_WRITE) < 0) {
+        if (avio_open(&outfmt_ctx->pb, outFilePath, AVIO_FLAG_READ_WRITE) < 0) {
             printf("output file open failed.\n");
             break;
         }
 
-        //在输出的mp4文件中创建一条视频流
-        outVStream = avformat_new_stream(outFmtCtx, NULL);
+        outVStream = avformat_new_stream(outfmt_ctx, NULL);
         if (!outVStream) {
             printf("Failed allocating output stream.\n");
             break;
@@ -77,16 +69,14 @@ int main() {
         outVStream->time_base.num = 1;
         outVStreamIndex = outVStream->index;
 
-        //查找编码器
         outCodec = avcodec_find_encoder(codecPara->codec_id);
         if (outCodec == NULL) {
             printf("Cannot find any encoder.\n");
             break;
         }
 
-        //从输入的h264编码器数据复制一份到输出文件的编码器中
         outCodecCtx = avcodec_alloc_context3(outCodec);
-        outCodecPara = outFmtCtx->streams[outVStream->index]->codecpar;
+        outCodecPara = outfmt_ctx->streams[outVStream->index]->codecpar;
         if (avcodec_parameters_copy(outCodecPara, codecPara) < 0) {
             printf("Cannot copy codec para.\n");
             break;
@@ -98,30 +88,26 @@ int main() {
         outCodecCtx->time_base.den = 25;
         outCodecCtx->time_base.num = 1;
 
-        //打开输出文件需要的编码器
+        
         if (avcodec_open2(outCodecCtx, outCodec, NULL) < 0) {
             printf("Cannot open output codec.\n");
             break;
         }
 
         printf("============Output Information=============>\n");
-        av_dump_format(outFmtCtx, 0, outFileName, 1);
+        av_dump_format(outfmt_ctx, 0, outFilePath, 1);
         printf("============Output Information=============<\n");
 
-        //写入文件头
-        if (avformat_write_header(outFmtCtx, NULL) < 0) {
+        
+        if (avformat_write_header(outfmt_ctx, NULL) < 0) {
             printf("Cannot write header to file.\n");
             return -1;
         }
 
-        //===============编码部分===============//
 
-        inVStream = inVFmtCtx->streams[inVStreamIndex];
-        while (av_read_frame(inVFmtCtx, pkt) >= 0) {//循环读取每一帧直到读完
-            if (pkt->stream_index == inVStreamIndex) {//确保处理的是视频流
-                //FIXME：No PTS (Example: Raw H.264)
-                //Simple Write PTS
-                //如果当前处理帧的显示时间戳为0或者没有等等不是正常值
+        inVStream = infmt_ctx->streams[inVStreamIndex];
+        while (av_read_frame(infmt_ctx, pkt) >= 0) {
+            if (pkt->stream_index == inVStreamIndex) {
                 if (pkt->pts == AV_NOPTS_VALUE) {
                     printf("frame_index:%d\n", frame_index);
                     //Write PTS
@@ -142,7 +128,7 @@ int main() {
                 pkt->stream_index = outVStreamIndex;
                 printf("Write 1 Packet. size:%5d\tpts:%ld\n", pkt->size, pkt->pts);
                 //Write
-                if (av_interleaved_write_frame(outFmtCtx, pkt) < 0) {
+                if (av_interleaved_write_frame(outfmt_ctx, pkt) < 0) {
                     printf("Error muxing packet\n");
                     break;
                 }
@@ -150,17 +136,15 @@ int main() {
             }
         }
 
-        av_write_trailer(outFmtCtx);
+        av_write_trailer(outfmt_ctx);
     } while (0);
 
-    //=================释放所有指针=======================
     av_packet_free(&pkt);
-    avformat_close_input(&outFmtCtx);
+    avformat_close_input(&outfmt_ctx);
     avcodec_close(outCodecCtx);
     avcodec_free_context(&outCodecCtx);
-    avformat_close_input(&inVFmtCtx);
-    avformat_free_context(inVFmtCtx);
-    avio_close(outFmtCtx->pb);
+    avformat_close_input(&infmt_ctx);
+    avformat_free_context(infmt_ctx);
 
     return 0;
 }
